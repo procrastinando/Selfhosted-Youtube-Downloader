@@ -29,8 +29,10 @@ services:
     container_name: YTdownloader
     network_mode: service:gluetun
     environment:
-      GROQ_API_KEYS: ["gsk_aaaaaaa", "gsk_bbbbbbb", "gsk_ccccccc"]
-      WHISPER_MODEL_ID: "whisper-large-v3"
+      GROQ_API_KEYS: gsk-aaaaaaaaa,gsk-bbbbbbbbb,gsk-ccccccccc
+      WHISPER_MODEL_ID: whisper-large-v3
+      USER_ID: admin
+      USER_PASSWORD: password
     volumes:
       - downloader:/downloader
     restart: unless-stopped

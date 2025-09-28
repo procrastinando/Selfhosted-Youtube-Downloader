@@ -9,8 +9,10 @@ import groq
 import random
 
 # --- Configuration & Setup ---
-GROQ_API_KEYS=os.getenv("GROQ_API_KEYS")
+GROQ_API_KEYS = [a.strip() for a in os.getenv("GROQ_API_KEYS", "").split(",") if a.strip()]
 WHISPER_MODEL=os.getenv("WHISPER_MODEL_ID")
+USER_ID=os.getenv("USER_ID")
+USER_PASSWORD=os.getenv("USER_PASSWORD")
 DOWNLOADS_DIR = "downloads"
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
@@ -248,4 +250,4 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     )
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(title="Youtube Video Downloader", server_name="0.0.0.0", auth=(USER_ID, USER_PASSWORD))
