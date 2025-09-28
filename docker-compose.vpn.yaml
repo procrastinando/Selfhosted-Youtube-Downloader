@@ -1,0 +1,42 @@
+services:
+  gluetun:
+    image: qmcgaw/gluetun
+    container_name: YTdownloader-gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    ports:
+      - 7860:7860
+    volumes:
+      - gluetun_config:/gluetun
+    environment:
+      - VPN_SERVICE_PROVIDER=surfshark
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxx=
+      - WIREGUARD_ADDRESSES=10.14.0.2/16
+      # - SERVER_COUNTRIES=Switzerland
+      # - SERVER_CITIES=Bend
+      - SERVER_HOSTNAMES=nl-ams-st001.prod.surfshark.com
+    networks:
+      network:
+    restart: unless-stopped
+
+  Youtube-Downloader:
+    build:
+      context: https://github.com/procrastinando/Selfhosted-Youtube-Downloader.git#main
+    image: procrastinando/Selfhosted-Youtube-Downloader:latest
+    container_name: YTdownloader
+    network_mode: service:gluetun
+    environment:
+      GROQ_API_KEYS: ["gsk_aaaaaaa", "gsk_bbbbbbb", "gsk_ccccccc"]
+      WHISPER_MODEL_ID: "whisper-large-v3"
+    volumes:
+      - downloader:/downloader
+    restart: unless-stopped
+
+volumes:
+  downloader:
+
+networks:
+  network:
