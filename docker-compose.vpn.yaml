@@ -28,11 +28,12 @@ services:
     image: procrastinando/ytdownloader:latest
     container_name: ytdownloader
     network_mode: service:gluetun
+    tty: true
     environment:
-      GROQ_API_KEYS: gsk-aaaaaaaaa,gsk-bbbbbbbbb,gsk-ccccccccc
+      GROQ_API_KEYS: gsk_aaaaaaa,gsk_bbbbbbb,gsk_ccccccc
       WHISPER_MODEL_ID: whisper-large-v3
-      USER_ID: admin
-      USER_PASSWORD: password
+      GRADIO_USERNAME: "admin"
+      GRADIO_PASSWORD: "pa55word"
     volumes:
       - downloader:/downloader
     restart: unless-stopped

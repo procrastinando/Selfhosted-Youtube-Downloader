@@ -7,14 +7,22 @@ from collections import defaultdict
 from groq import Groq
 import groq
 import random
+import logging
 
 # --- Configuration & Setup ---
+# Setup robust logging to be visible in Docker
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Load configuration from environment variables for Docker compatibility
 GROQ_API_KEYS = [a.strip() for a in os.getenv("GROQ_API_KEYS", "").split(",") if a.strip()]
-WHISPER_MODEL=os.getenv("WHISPER_MODEL_ID")
-USER_ID=os.getenv("USER_ID")
-USER_PASSWORD=os.getenv("USER_PASSWORD")
+WHISPER_MODEL = os.getenv("WHISPER_MODEL_ID", "whisper-large-v3") # Default to v3 if not set
 DOWNLOADS_DIR = "downloads"
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+
+# Log the loaded configuration to verify
+logging.info(f"Loaded {len(GROQ_API_KEYS)} Groq API keys.")
+logging.info(f"Using Whisper Model: {WHISPER_MODEL}")
+
 
 # --- Groq Transcription Functions ---
 def format_time(seconds):
@@ -35,12 +43,8 @@ def generate_srt_from_transcription(transcription, srt_path):
     return False
 
 def transcribe_with_groq(api_keys, audio_path, srt_path):
-    """
-    Tries to transcribe audio using a list of Groq API keys, shuffling them to distribute load.
-    Retries on rate limit errors.
-    """
-    if not api_keys or not api_keys[0].startswith("gsk_"):
-         return {"error": "No valid Groq API keys found in the script. Please add them to the GROQ_API_KEYS list."}
+    if not api_keys:
+         return {"error": "No Groq API keys found. Please set the GROQ_API_KEYS environment variable."}
     
     shuffled_keys = api_keys[:]
     random.shuffle(shuffled_keys)
@@ -56,26 +60,26 @@ def transcribe_with_groq(api_keys, audio_path, srt_path):
                     timestamp_granularities=["segment"],
                 )
             if generate_srt_from_transcription(transcription, srt_path):
-                # Success!
+                logging.info(f"Successfully transcribed using key starting with '{key[:7]}...'")
                 return {"success": True, "srt_path": srt_path}
             else:
                 return {"error": "Transcription succeeded but no segments were found."}
 
         except groq.RateLimitError:
-            print(f"Key starting with '{key[:7]}...' hit a rate limit. Trying next key.")
-            continue  # Try the next key in the list
+            logging.warning(f"Key starting with '{key[:7]}...' hit a rate limit. Trying next key.")
+            continue
         except groq.PermissionDeniedError:
-            print(f"Key starting with '{key[:7]}...' is invalid or blocked. Trying next key.")
-            continue # Try the next key
+            logging.warning(f"Key starting with '{key[:7]}...' is invalid or blocked. Trying next key.")
+            continue
         except Exception as e:
-            return {"error": f"An unexpected error occurred during transcription: {e}"}
+            logging.error(f"An unexpected error occurred during transcription: {e}")
+            return {"error": f"An unexpected error during transcription: {e}"}
 
-    # If the loop finishes, all keys have failed
     return {"error": "All Groq API keys failed due to rate limits or errors."}
 
 # --- YouTube Download Functions ---
 def get_video_info(url):
-    ydl_opts = {'quiet': True}
+    ydl_opts = {'quiet': True, 'no_warnings': True}
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         try:
             return ydl.extract_info(url, download=False)
@@ -103,20 +107,15 @@ def parse_formats(info_dict):
     return sorted_video_formats, sorted_audio_formats, None
 
 def download_media(url, format_selector, output_path_template, postprocessor_hooks=None):
-    """A generic function to download media using yt-dlp."""
     ydl_opts = {
-        'format': format_selector,
-        'outtmpl': output_path_template,
-        'merge_output_format': 'mp4',
-        'overwrites': True,
-        'quiet': True,
+        'format': format_selector, 'outtmpl': output_path_template,
+        'merge_output_format': 'mp4', 'overwrites': True,
+        'quiet': True, 'no_warnings': True
     }
     if postprocessor_hooks:
         ydl_opts['postprocessors'] = postprocessor_hooks
-
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
-    return True
 
 # --- Gradio UI and Event Handlers ---
 def on_next_button_click(url):
@@ -140,7 +139,9 @@ def on_next_button_click(url):
     }
 
 def on_convert_button_click(url, video_format_str, audio_format_str, info_state, generate_subs):
+    # Initial UI state reset
     yield {
+        status_display: gr.update(value="Starting process...", visible=True),
         media_download_button: gr.update(visible=False),
         srt_download_button: gr.update(visible=False),
     }
@@ -148,78 +149,95 @@ def on_convert_button_click(url, video_format_str, audio_format_str, info_state,
     sanitized_title = re.sub(r'[\\/*?:"<>|]', "", info_state["title"])
     base_filepath = os.path.join(DOWNLOADS_DIR, sanitized_title)
     
-    # Step 1: Download main media
-    gr.Info("Downloading selected media...")
-    main_output_file = None
+    video_file, audio_file, srt_file_path = None, None, None
+
     try:
-        if video_format_str == "No video":
-            audio_bitrate = re.search(r'(\d+)kbps', audio_format_str).group(1)
-            selector = f'bestaudio[abr<={audio_bitrate}]/bestaudio'
-            pp_hooks = [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3'}]
-            download_media(url, selector, f"{base_filepath}.%(ext)s", pp_hooks)
-            main_output_file = f"{base_filepath}.mp3"
-        else:
+        # Step 1: Download Video (if selected)
+        if video_format_str != "No video":
+            yield { status_display: gr.update(value="➡️ Step 1/4: Downloading video...") }
             video_res = re.search(r'(\d+)p', video_format_str).group(1)
-            audio_bitrate = re.search(r'(\d+)kbps', audio_format_str).group(1)
-            selector = f'bestvideo[height<={video_res}]+bestaudio[abr<={audio_bitrate}]/best[height<={video_res}]'
-            download_media(url, selector, f"{base_filepath}.%(ext)s")
-            main_output_file = f"{base_filepath}.mp4"
-    except Exception as e:
-        gr.Error(f"Failed to download media: {e}")
-        return
-
-    srt_file_path = None
-    if generate_subs:
-        # Step 2: Download audio for transcription
-        gr.Info("Getting audio for transcription...")
-        transcription_audio_path = f"{base_filepath}_transcribe.mp3"
-        try:
-            download_media(
-                url, 'bestaudio[abr<=70]/bestaudio', 
-                f"{base_filepath}_transcribe.%(ext)s", 
-                [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3'}]
-            )
-        except Exception as e:
-            gr.Error(f"Failed to download transcription audio: {e}")
-            # Yield the main file even if transcription fails
-            yield { media_download_button: gr.update(value=main_output_file, visible=True) }
-            return
-            
-        # Step 3: Transcribe with Groq
-        gr.Info("Generating subtitles with Groq API... This may take a while.")
-        srt_file_path = f"{base_filepath}.srt"
-        transcription_result = transcribe_with_groq(GROQ_API_KEYS, transcription_audio_path, srt_file_path)
-        if os.path.exists(transcription_audio_path):
-            os.remove(transcription_audio_path)
-
-        if "error" in transcription_result:
-            gr.Warning(transcription_result["error"])
-            srt_file_path = None # Ensure no download button appears on failure
-        else:
-            gr.Info("Subtitle generation successful!")
-
-        # Step 4: Merge subtitles if it's a video file
-        if srt_file_path and main_output_file.endswith(".mp4"):
-            gr.Info("Merging subtitles into video file...")
-            video_with_subs_path = f"{base_filepath}_with_subs.mp4"
-            try:
+            video_selector = f'bestvideo[height<={video_res}]/bestvideo'
+            download_media(url, video_selector, f"{base_filepath}_video.%(ext)s")
+            # Find the downloaded video file (extension can vary)
+            for ext in ['mp4', 'webm', 'mkv']:
+                if os.path.exists(f"{base_filepath}_video.{ext}"):
+                    video_file = f"{base_filepath}_video.{ext}"
+                    break
+        
+        # Step 2: Download Audio
+        yield { status_display: gr.update(value="➡️ Step 2/4: Downloading audio...") }
+        audio_bitrate = int(re.search(r'(\d+)kbps', audio_format_str).group(1))
+        audio_selector = f'bestaudio[abr<={audio_bitrate}]/bestaudio'
+        # Download as m4a/opus for better quality before potential re-encoding
+        download_media(url, audio_selector, f"{base_filepath}_audio.%(ext)s")
+        for ext in ['m4a', 'webm', 'opus']:
+             if os.path.exists(f"{base_filepath}_audio.{ext}"):
+                    audio_file = f"{base_filepath}_audio.{ext}"
+                    break
+        
+        # Step 3: Handle Subtitles
+        transcription_audio_path = audio_file # Assume we use the original audio first
+        if generate_subs:
+            # Step 3a: Compress audio if needed
+            if audio_bitrate > 70:
+                yield { status_display: gr.update(value="➡️ Step 3/4: Compressing audio for transcription...") }
+                transcription_audio_path = f"{base_filepath}_transcribe_compressed.mp3"
                 subprocess.run([
-                    'ffmpeg', '-y', '-i', main_output_file, '-i', srt_file_path,
-                    '-c', 'copy', '-c:s', 'mov_text', video_with_subs_path
+                    'ffmpeg', '-i', audio_file, '-y',
+                    '-vn', '-acodec', 'libmp3lame', '-b:a', '64k',
+                    transcription_audio_path
                 ], check=True, capture_output=True)
-                os.remove(main_output_file)
-                os.rename(video_with_subs_path, main_output_file)
-            except Exception as e:
-                gr.Error(f"Failed to merge subtitles: {e}")
+            
+            # Step 3b: Transcribe
+            yield { status_display: gr.update(value="➡️ Step 3/4: Generating subtitles with Groq API...") }
+            srt_file_path = f"{base_filepath}.srt"
+            result = transcribe_with_groq(GROQ_API_KEYS, transcription_audio_path, srt_file_path)
 
-    gr.Info("Process Complete!")
-    yield {
-        media_download_button: gr.update(value=main_output_file, visible=True),
-        srt_download_button: gr.update(value=srt_file_path, visible=bool(srt_file_path))
-    }
+            if transcription_audio_path != audio_file: # Clean up compressed file
+                os.remove(transcription_audio_path)
+
+            if "error" in result:
+                gr.Warning(result["error"])
+                srt_file_path = None
+        
+        # Step 4: Merge and finalize
+        yield { status_display: gr.update(value="➡️ Step 4/4: Finalizing files...") }
+        final_media_file = None
+        if video_file and audio_file:
+            final_media_file = f"{base_filepath}.mp4"
+            merge_cmd = ['ffmpeg', '-y', '-i', video_file, '-i', audio_file]
+            if srt_file_path:
+                merge_cmd.extend(['-i', srt_file_path, '-c', 'copy', '-c:s', 'mov_text'])
+            else:
+                merge_cmd.extend(['-c', 'copy'])
+            merge_cmd.append(final_media_file)
+            subprocess.run(merge_cmd, check=True, capture_output=True)
+            os.remove(video_file)
+            os.remove(audio_file)
+        elif audio_file: # Audio-only download
+            final_media_file = f"{base_filepath}.mp3"
+            subprocess.run([
+                'ffmpeg', '-y', '-i', audio_file, '-acodec', 'libmp3lame', '-b:a', f'{audio_bitrate}k', final_media_file
+            ], check=True, capture_output=True)
+            os.remove(audio_file)
+
+        gr.Info("Process Complete!")
+        yield {
+            status_display: gr.update(value="✅ Process Complete!", visible=True),
+            media_download_button: gr.update(value=final_media_file, visible=True),
+            srt_download_button: gr.update(value=srt_file_path, visible=bool(srt_file_path))
+        }
+
+    except Exception as e:
+        logging.error(f"An error occurred in the conversion process: {e}")
+        gr.Error(f"An error occurred: {e}")
+        # Clean up partial files
+        for f in [video_file, audio_file]:
+            if f and os.path.exists(f): os.remove(f)
+        yield { status_display: gr.update(value=f"❌ Error: {e}", visible=True) }
 
 # --- Gradio Interface Definition ---
-with gr.Blocks(theme=gr.themes.Soft()) as demo:
+with gr.Blocks(theme=gr.themes.Soft(), title="Youtube Video Downloader") as demo:
     gr.Markdown("# YouTube Video Downloader & Converter")
     info_state = gr.State({})
     
@@ -233,7 +251,12 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         audio_dropdown = gr.Dropdown(label="Audio Quality", visible=False)
         subtitles_checkbox = gr.Checkbox(label="Generate subtitles", value=False, visible=False)
         convert_button = gr.Button("Convert", visible=False)
-        
+    
+    # Persistent status display
+    status_display = gr.Markdown(visible=False)
+    
+    # Separated download buttons for better layout
+    gr.Markdown("---", visible=True) # A visible divider
     with gr.Row():
         media_download_button = gr.DownloadButton(label="Download Media File", visible=False)
         srt_download_button = gr.DownloadButton(label="Download .SRT File", visible=False)
@@ -246,8 +269,19 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     convert_button.click(
         on_convert_button_click,
         inputs=[url_input, video_dropdown, audio_dropdown, info_state, subtitles_checkbox],
-        outputs=[media_download_button, srt_download_button]
+        outputs=[status_display, media_download_button, srt_download_button]
     )
 
 if __name__ == "__main__":
-    demo.launch(title="Youtube Video Downloader", server_name="0.0.0.0", auth=(USER_ID, USER_PASSWORD))
+    # --- NEW: Authentication Logic ---
+    gradio_username = os.getenv("GRADIO_USERNAME")
+    gradio_password = os.getenv("GRADIO_PASSWORD")
+    
+    auth_credentials = None
+    if gradio_username and gradio_password:
+        auth_credentials = (gradio_username, gradio_password)
+        logging.info("Authentication enabled.")
+    else:
+        logging.info("No credentials found. Running in public mode.")
+        
+    demo.launch(server_name="0.0.0.0", auth=auth_credentials)

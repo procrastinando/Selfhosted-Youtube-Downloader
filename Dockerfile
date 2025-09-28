@@ -30,5 +30,8 @@ COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/pytho
 # Copy the application code from the 'builder' stage
 COPY --from=builder /downloader .
 
+# Define environment variable for FFmpeg log level to keep logs clean
+ENV FFMPEG_LOGLEVEL=error
+
 # Set the command to run your bot
-CMD ["python", "downloader.py"]
+CMD ["python", "-u", "downloader.py"]
