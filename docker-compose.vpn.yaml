@@ -22,11 +22,11 @@ services:
       network:
     restart: unless-stopped
 
-  Youtube-Downloader:
+  ytdownloader:
     build:
       context: https://github.com/procrastinando/Selfhosted-Youtube-Downloader.git#main
-    image: procrastinando/Selfhosted-Youtube-Downloader:latest
-    container_name: YTdownloader
+    image: procrastinando/ytdownloader:latest
+    container_name: ytdownloader
     network_mode: service:gluetun
     environment:
       GROQ_API_KEYS: gsk-aaaaaaaaa,gsk-bbbbbbbbb,gsk-ccccccccc

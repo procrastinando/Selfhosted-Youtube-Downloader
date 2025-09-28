@@ -1,9 +1,9 @@
 services:
-  YTdownloader:
+  ytdownloader:
     build:
       context: https://github.com/procrastinando/Selfhosted-Youtube-Downloader.git#main
-    image: procrastinando/Selfhosted-Youtube-Downloader:latest
-    container_name: YTdownloader
+    image: procrastinando/ytdownloader:latest
+    container_name: ytdownloader
     ports:
       - 7860:7860
     environment:
