@@ -73,7 +73,8 @@ services:
 Run the following command from your terminal in the same directory as the `docker-compose.yml` file:
 ```bash
 docker-compose up -d
-```The application will be available at `http://<your-server-ip>:7860`.
+```
+The application will be available at `http://<your-server-ip>:7860`.
 
 ---
 
