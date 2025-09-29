@@ -236,11 +236,32 @@ def on_convert_button_click(url, video_format_str, audio_format_str, info_state,
             if f and os.path.exists(f): os.remove(f)
         yield { status_display: gr.update(value=f"❌ Error: {e}", visible=True) }
 
+# --- NEW: Restart function for backward compatibility ---
+def restart_app():
+    """Resets all UI components to their initial state."""
+    return {
+        info_state: {},
+        url_input: gr.update(value=""),
+        format_selection: gr.update(visible=False),
+        subtitle: gr.update(visible=False),
+        video_dropdown: gr.update(value=None, choices=[], visible=False),
+        audio_dropdown: gr.update(value=None, choices=[], visible=False),
+        subtitles_checkbox: gr.update(value=False, visible=False),
+        convert_button: gr.update(visible=False),
+        status_display: gr.update(value="", visible=False),
+        media_download_button: gr.update(visible=False),
+        srt_download_button: gr.update(visible=False),
+    }
+
 # --- Gradio Interface Definition ---
-with gr.Blocks(theme=gr.themes.Soft(), title="Youtube Video Downloader") as demo:
-    gr.Markdown("# YouTube Video Downloader & Converter")
+with gr.Blocks(theme=gr.themes.Soft(), title="Youtube Video Downloader", css="footer {visibility: hidden}") as demo:
     info_state = gr.State({})
     
+    with gr.Row():
+        gr.Markdown("# YouTube Video Downloader & Converter")
+        # Changed scale to 0 to make it take minimum width
+        restart_button = gr.Button("Restart", variant="stop", scale=0)
+
     with gr.Column():
         url_input = gr.Textbox(label="YouTube Video Link", placeholder="Enter YouTube URL here...")
         next_button = gr.Button("Next")
@@ -252,14 +273,19 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Youtube Video Downloader") as demo
         subtitles_checkbox = gr.Checkbox(label="Generate subtitles", value=False, visible=False)
         convert_button = gr.Button("Convert", visible=False)
     
-    # Persistent status display
     status_display = gr.Markdown(visible=False)
     
-    # Separated download buttons for better layout
-    gr.Markdown("---", visible=True) # A visible divider
+    gr.Markdown("---", visible=True)
     with gr.Row():
         media_download_button = gr.DownloadButton(label="Download Media File", visible=False)
         srt_download_button = gr.DownloadButton(label="Download .SRT File", visible=False)
+
+    # List of all UI components to be targeted by the restart function
+    all_components = [
+        info_state, url_input, format_selection, subtitle, video_dropdown,
+        audio_dropdown, subtitles_checkbox, convert_button, status_display,
+        media_download_button, srt_download_button
+    ]
 
     next_button.click(
         on_next_button_click, inputs=[url_input],
@@ -271,9 +297,15 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Youtube Video Downloader") as demo
         inputs=[url_input, video_dropdown, audio_dropdown, info_state, subtitles_checkbox],
         outputs=[status_display, media_download_button, srt_download_button]
     )
+    
+    # NEW: Link the restart button to the Python reset function
+    restart_button.click(
+        fn=restart_app,
+        inputs=[],
+        outputs=all_components
+    )
 
 if __name__ == "__main__":
-    # --- NEW: Authentication Logic ---
     gradio_username = os.getenv("GRADIO_USERNAME")
     gradio_password = os.getenv("GRADIO_PASSWORD")
     
