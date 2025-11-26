@@ -1,3 +1,4 @@
-yt-dlp
-gradio>=5
-groq
+gradio>=4.0.0
+yt-dlp>=2023.0.0
+groq>=0.4.0
+ffmpeg-python
